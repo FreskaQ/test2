@@ -15,7 +15,7 @@
 
 namespace raklib\server;
 
-use raklib\Binary;
+use pocketmine\utils\Binary;
 use raklib\protocol\EncapsulatedPacket;
 use raklib\RakLib;
 
@@ -65,17 +65,15 @@ class ServerHandler{
 		$buffer = chr(RakLib::PACKET_SHUTDOWN);
 		$this->server->pushMainToThreadPacket($buffer);
 		$this->server->shutdown();
-		$this->server->synchronized(function(){
-			if($this->server !== null){
-				$this->server->wait(20000);
-			}
-		});
+		$this->server->synchronized(function(RakLibServer $server){
+			$server->wait(20000);
+		}, $this->server);
 		$this->server->join();
 	}
 
 	public function emergencyShutdown(){
 		$this->server->shutdown();
-		$this->server->pushMainToThreadPacket("\x7f"); //RakLib::PACKET_EMERGENCY_SHUTDOWN
+		$this->server->pushMainToThreadPacket(chr(RakLib::PACKET_EMERGENCY_SHUTDOWN));
 	}
 
 	protected function invalidSession($identifier){
@@ -139,6 +137,12 @@ class ServerHandler{
 				$offset += $len;
 				$identifierACK = Binary::readInt(substr($packet, $offset, 4));
 				$this->instance->notifyACK($identifier, $identifierACK);
+			}elseif($id === RakLib::PACKET_REPORT_PING){
+				$len = ord($packet{$offset++});
+				$identifier = substr($packet, $offset, $len);
+				$offset += $len;
+				$pingMS = Binary::readInt(substr($packet, $offset, 4));
+				$this->instance->updatePing($identifier, $pingMS);
 			}
 
 			return true;

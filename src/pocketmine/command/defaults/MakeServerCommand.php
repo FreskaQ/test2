@@ -57,7 +57,7 @@ class MakeServerCommand extends VanillaCommand {
 		}
 
 		$server = $sender->getServer();
-		$pharPath = Server::getInstance()->getPluginPath() . DIRECTORY_SEPARATOR . "GenisysPro" . DIRECTORY_SEPARATOR . $server->getName() . "_" . $server->getPocketMineVersion() . "_" . date("Y-m-d") . ".phar";
+		$pharPath = Server::getInstance()->getPluginPath() . DIRECTORY_SEPARATOR . "LiteCore" . DIRECTORY_SEPARATOR . $server->getName() . "_" . $server->getPocketMineVersion() . "_" . date("Y-m-d") . ".phar";
 		if(file_exists($pharPath)){
 			$sender->sendMessage("Phar file already exists, overwriting...");
 			@unlink($pharPath);
@@ -85,7 +85,7 @@ class MakeServerCommand extends VanillaCommand {
 					continue;
 				}
 				$phar->addFile($file, $path);
-				$sender->sendMessage("[GenisysPro] Adding $path");
+				$sender->sendMessage("[LiteCore] Adding $path");
 			}
 		}
 		foreach(new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($filePath . "src")) as $file){
@@ -94,7 +94,7 @@ class MakeServerCommand extends VanillaCommand {
 				continue;
 			}
 			$phar->addFile($file, $path);
-			$sender->sendMessage("[GenisysPro] Adding $path");
+			$sender->sendMessage("[LiteCore] Adding $path");
 		}
 		foreach($phar as $file => $finfo){
 			/** @var \PharFileInfo $finfo */
@@ -105,14 +105,12 @@ class MakeServerCommand extends VanillaCommand {
 		$phar->stopBuffering();
 
 		$license = "
-  _____            _               _____           
- / ____|          (_)             |  __ \          
-| |  __  ___ _ __  _ ___ _   _ ___| |__) | __ ___  
-| | |_ |/ _ \ '_ \| / __| | | / __|  ___/ '__/ _ \ 
-| |__| |  __/ | | | \__ \ |_| \__ \ |   | | | (_) |
- \_____|\___|_| |_|_|___/\__, |___/_|   |_|  \___/ 
-                         __/ |                    
-                        |___/         
+ _      _ _        _____               
+| |    (_) |      / ____|              
+| |     _| |_ ___| |     ___  _ __ ___ 
+| |    | | __/ _ \ |    / _ \| '__/ _ \
+| |____| | ||  __/ |___| (_) | | |  __/
+|______|_|\__\___|\_____\___/|_|  \___|
  ";
 		$sender->sendMessage($license);
 		$sender->sendMessage($server->getName() . " " . $server->getPocketMineVersion() . " Phar file has been created on " . $pharPath);

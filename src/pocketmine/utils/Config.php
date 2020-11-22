@@ -21,7 +21,6 @@
 
 namespace pocketmine\utils;
 
-use pocketmine\scheduler\FileWriteTask;
 use pocketmine\Server;
 
 
@@ -50,6 +49,9 @@ class Config {
 	private $correct = false;
 	/** @var int */
 	private $type = Config::DETECT;
+
+	/** @var bool */
+	private $changed = false;
 
 	public static $formats = [
 		"properties" => Config::PROPERTIES,
@@ -90,6 +92,14 @@ class Config {
 		$this->load($this->file, $this->type);
 	}
 
+	public function hasChanged() : bool{
+		return $this->changed;
+	}
+
+	public function setChanged(bool $changed = true) : void{
+		$this->changed = $changed;
+	}
+
 	/**
 	 * @param $str
 	 *
@@ -100,32 +110,30 @@ class Config {
 	}
 
 	/**
-	 * @param       $file
-	 * @param int   $type
-	 * @param array $default
+	 * @param string $file
+	 * @param int    $type
+	 * @param array  $default
 	 *
 	 * @return bool
 	 */
-	public function load($file, $type = Config::DETECT, $default = []){
+	public function load(string $file, int $type = Config::DETECT, array $default = []){
 		$this->correct = true;
-		$this->type = (int) $type;
 		$this->file = $file;
-		if(!is_array($default)){
-			$default = [];
+		$this->type = $type;
+		if($this->type === Config::DETECT){
+			$extension = explode(".", basename($this->file));
+			$extension = strtolower(trim(array_pop($extension)));
+			if(isset(Config::$formats[$extension])){
+				$this->type = Config::$formats[$extension];
+			}else{
+				$this->correct = false;
+			}
 		}
+
 		if(!file_exists($file)){
 			$this->config = $default;
 			$this->save();
 		}else{
-			if($this->type === Config::DETECT){
-				$extension = explode(".", basename($this->file));
-				$extension = strtolower(trim(array_pop($extension)));
-				if(isset(Config::$formats[$extension])){
-					$this->type = Config::$formats[$extension];
-				}else{
-					$this->correct = false;
-				}
-			}
 			if($this->correct === true){
 				$content = file_get_contents($this->file);
 				switch($this->type){
@@ -173,45 +181,34 @@ class Config {
 	}
 
 	/**
-	 * @param bool $async
-	 *
 	 * @return bool
 	 */
-	public function save($async = false){
+	public function save(){
 		if($this->correct === true){
-			try{
-				$content = null;
-				switch($this->type){
-					case Config::PROPERTIES:
-					case Config::CNF:
-						$content = $this->writeProperties();
-						break;
-					case Config::JSON:
-						$content = json_encode($this->config, JSON_PRETTY_PRINT | JSON_BIGINT_AS_STRING | JSON_UNESCAPED_UNICODE);
-						break;
-					case Config::YAML:
-						$content = yaml_emit($this->config, YAML_UTF8_ENCODING);
-						break;
-					case Config::SERIALIZED:
-						$content = serialize($this->config);
-						break;
-					case Config::ENUM:
-						$content = implode("\r\n", array_keys($this->config));
-						break;
-				}
-
-				if($async){
-					Server::getInstance()->getScheduler()->scheduleAsyncTask(new FileWriteTask($this->file, $content));
-				}else{
-					file_put_contents($this->file, $content);
-				}
-			}catch(\Throwable $e){
-				$logger = Server::getInstance()->getLogger();
-				$logger->critical("Could not save Config " . $this->file . ": " . $e->getMessage());
-				if(\pocketmine\DEBUG > 1 and $logger instanceof MainLogger){
-					$logger->logException($e);
-				}
+			$content = null;
+			switch($this->type){
+				case Config::PROPERTIES:
+					$content = $this->writeProperties();
+					break;
+				case Config::JSON:
+					$content = json_encode($this->config, $this->jsonOptions);
+					break;
+				case Config::YAML:
+					$content = yaml_emit($this->config, YAML_UTF8_ENCODING);
+					break;
+				case Config::SERIALIZED:
+					$content = serialize($this->config);
+					break;
+				case Config::ENUM:
+					$content = implode("\r\n", array_keys($this->config));
+					break;
+				default:
+					throw new \InvalidStateException("Config type is unknown, has not been set or not detected");
 			}
+
+			file_put_contents($this->file, $content);
+
+			$this->changed = false;
 
 			return true;
 		}else{
@@ -275,7 +272,8 @@ class Config {
 		}
 
 		$base = $value;
-		$this->nestedCache[$key] = $value;
+		$this->nestedCache = [];
+		$this->changed = true;
 	}
 
 	/**
@@ -309,6 +307,26 @@ class Config {
 		return $this->nestedCache[$key] = $base;
 	}
 
+	public function removeNested(string $key) : void{
+		$this->nestedCache = [];
+
+		$vars = explode(".", $key);
+
+		$currentNode =& $this->config;
+		while(count($vars) > 0){
+			$nodeName = array_shift($vars);
+			if(isset($currentNode[$nodeName])){
+				if(empty($vars)){ //final node
+					unset($currentNode[$nodeName]);
+				}elseif(is_array($currentNode[$nodeName])){
+					$currentNode =& $currentNode[$nodeName];
+				}
+			}else{
+				break;
+			}
+		}
+	}
+
 	/**
 	 * @param       $k
 	 * @param mixed $default
@@ -325,6 +343,7 @@ class Config {
 	 */
 	public function set($k, $v = true){
 		$this->config[$k] = $v;
+		$this->changed = true;
 		foreach($this->nestedCache as $nestedKey => $nvalue){
 			if(substr($nestedKey, 0, strlen($k) + 1) === ($k . ".")){
 				unset($this->nestedCache[$nestedKey]);
@@ -337,6 +356,7 @@ class Config {
 	 */
 	public function setAll($v){
 		$this->config = $v;
+		$this->changed = true;
 	}
 
 	/**
@@ -356,19 +376,21 @@ class Config {
 	}
 
 	/**
-	 * @param $k
+	 * @param string $k
+	 *
+	 * @return void
 	 */
 	public function remove($k){
 		unset($this->config[$k]);
+		$this->changed = true;
 	}
 
 	/**
-	 * @param bool $keys
-	 *
-	 * @return array
+	 * @return mixed[]
+	 * @phpstan-return list<string>|array<string, mixed>
 	 */
-	public function getAll($keys = false){
-		return ($keys === true ? array_keys($this->config) : $this->config);
+	public function getAll(bool $keys = false) : array{
+		return ($keys ? array_keys($this->config) : $this->config);
 	}
 
 	/**
@@ -396,6 +418,10 @@ class Config {
 				$data[$k] = $v;
 				++$changed;
 			}
+		}
+
+		if($changed > 0){
+			$this->changed = true;
 		}
 
 		return $changed;

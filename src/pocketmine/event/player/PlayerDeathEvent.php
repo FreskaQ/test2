@@ -29,6 +29,9 @@ use pocketmine\Player;
 class PlayerDeathEvent extends EntityDeathEvent {
 	public static $handlerList = null;
 
+	/** @var Player */
+	protected $entity;
+
 	/** @var TextContainer|string */
 	private $deathMessage;
 	private $keepInventory = false;

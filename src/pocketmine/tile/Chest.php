@@ -37,7 +37,7 @@ class Chest extends Spawnable implements InventoryHolder, Container, Nameable {
 
 	/** @var ChestInventory */
 	protected $inventory;
-	/** @var DoubleChestInventory */
+	/** @var DoubleChestInventory|null */
 	protected $doubleInventory = null;
 
 	/**
@@ -54,7 +54,7 @@ class Chest extends Spawnable implements InventoryHolder, Container, Nameable {
 			$this->namedtag->Items->setTagType(NBT::TAG_Compound);
 		}
 		for($i = 0; $i < $this->getSize(); ++$i){
-			$this->inventory->setItem($i, $this->getItem($i));
+			$this->inventory->setItem($i, $this->getItem($i), false);
 		}
 	}
 
@@ -67,15 +67,30 @@ class Chest extends Spawnable implements InventoryHolder, Container, Nameable {
 			foreach($this->getInventory()->getViewers() as $player){
 				$player->removeWindow($this->getRealInventory());
 			}
+
+			if($this->doubleInventory !== null){
+				if($this->isPaired() and $this->level->isChunkLoaded($this->namedtag->pairx->getValue() >> 4, $this->namedtag->pairz->getValue() >> 4)){
+					$this->doubleInventory->invalidate();
+					if(($pair = $this->getPair()) !== null){
+						$pair->doubleInventory = null;
+					}
+				}
+				$this->doubleInventory = null;
+			}
+
+			$this->inventory = null;
+
 			parent::close();
 		}
 	}
 
 	public function saveNBT(){
+		parent::saveNBT();
 		$this->namedtag->Items = new ListTag("Items", []);
 		$this->namedtag->Items->setTagType(NBT::TAG_Compound);
+		$inventory = $this->getRealInventory();
 		for($index = 0; $index < $this->getSize(); ++$index){
-			$this->setItem($index, $this->inventory->getItem($index));
+			$this->setItem($index, $inventory->getItem($index));
 		}
 	}
 
@@ -181,13 +196,13 @@ class Chest extends Spawnable implements InventoryHolder, Container, Nameable {
 				$pair->checkPairing();
 			}
 			if($this->doubleInventory === null){
-				if(($p = $pair->getDoubleInventory()) instanceof DoubleChestInventory){
-					$this->doubleInventory = $p;
+				if($pair->doubleInventory !== null){
+					$this->doubleInventory = $pair->doubleInventory;
 				}else{
 					if(($pair->x + ($pair->z << 15)) > ($this->x + ($this->z << 15))){ //Order them correctly
-						$this->doubleInventory = new DoubleChestInventory($pair, $this);
+						$this->doubleInventory = $pair->doubleInventory = new DoubleChestInventory($pair, $this);
 					}else{
-						$this->doubleInventory = new DoubleChestInventory($this, $pair);
+						$this->doubleInventory = $pair->doubleInventory = new DoubleChestInventory($this, $pair);
 					}
 				}
 			}
@@ -260,8 +275,8 @@ class Chest extends Spawnable implements InventoryHolder, Container, Nameable {
 
 		$this->createPair($tile);
 
-		$this->spawnToAll();
-		$tile->spawnToAll();
+		$this->onChanged();
+		$tile->onChanged();
 		$this->checkPairing();
 
 		return true;
@@ -289,12 +304,12 @@ class Chest extends Spawnable implements InventoryHolder, Container, Nameable {
 		$tile = $this->getPair();
 		unset($this->namedtag->pairx, $this->namedtag->pairz);
 
-		$this->spawnToAll();
+		$this->onChanged();
 
 		if($tile instanceof Chest){
 			unset($tile->namedtag->pairx, $tile->namedtag->pairz);
 			$tile->checkPairing();
-			$tile->spawnToAll();
+			$tile->onChanged();
 		}
 		$this->checkPairing();
 

@@ -57,6 +57,13 @@ abstract class Worker extends \Worker {
 		$this->classLoader = $loader;
 	}
 
+	/**
+	 * Registers the class loader for this thread.
+	 *
+	 * WARNING: This method MUST be called from any descendent threads' run() method to make autoloading usable.
+	 * If you do not do this, you will not be able to use new classes that were not loaded when the thread was started
+	 * (unless you are using a custom autoloader).
+	 */
 	public function registerClassLoader(){
 		if(!interface_exists("ClassLoader", false)){
 			require(\pocketmine\PATH . "src/spl/ClassLoader.php");
@@ -72,17 +79,14 @@ abstract class Worker extends \Worker {
 	 *
 	 * @return bool
 	 */
-	public function start(int $options = PTHREADS_INHERIT_ALL){
+	public function start(?int $options = \PTHREADS_INHERIT_ALL){
 		ThreadManager::getInstance()->add($this);
 
-		if(!$this->isRunning() and !$this->isJoined() and !$this->isTerminated()){
-			if($this->getClassLoader() === null){
-				$this->setClassLoader();
-			}
-			return parent::start($options);
+		if($this->getClassLoader() === null){
+			$this->setClassLoader();
 		}
 
-		return false;
+		return parent::start($options);
 	}
 
 	/**
@@ -91,16 +95,10 @@ abstract class Worker extends \Worker {
 	public function quit(){
 		$this->isKilled = true;
 
-		$this->notify();
-
 		if($this->isRunning()){
-			$this->shutdown();
+			while($this->unstack() !== null);
 			$this->notify();
-			$this->unstack();
-		}elseif(!$this->isJoined()){
-			if(!$this->isTerminated()){
-				$this->join();
-			}
+			$this->shutdown();
 		}
 
 		ThreadManager::getInstance()->remove($this);

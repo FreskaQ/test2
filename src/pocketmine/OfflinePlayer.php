@@ -38,21 +38,22 @@ use pocketmine\plugin\Plugin;
 
 class OfflinePlayer implements IPlayer, Metadatable {
 
+	/** @var string */
 	private $name;
+	/** @var Server */
 	private $server;
-	private $namedtag;
+	/** @var CompoundTag|null */
+	private $namedtag = null;
 
 	/**
 	 * @param Server $server
 	 * @param string $name
 	 */
-	public function __construct(Server $server, $name){
+	public function __construct(Server $server, string $name){
 		$this->server = $server;
 		$this->name = $name;
-		if(file_exists($this->server->getDataPath() . "players/" . strtolower($this->getName()) . ".dat")){
+		if($this->server->hasOfflinePlayerData($this->name)){
 			$this->namedtag = $this->server->getOfflinePlayerData($this->name);
-		}else{
-			$this->namedtag = null;
 		}
 	}
 
@@ -92,7 +93,7 @@ class OfflinePlayer implements IPlayer, Metadatable {
 			return;
 		}
 
-		if($value === true){
+		if($value){
 			$this->server->addOp(strtolower($this->getName()));
 		}else{
 			$this->server->removeOp(strtolower($this->getName()));
@@ -110,7 +111,7 @@ class OfflinePlayer implements IPlayer, Metadatable {
 	 * @param bool $value
 	 */
 	public function setBanned($value){
-		if($value === true){
+		if($value){
 			$this->server->getNameBans()->addBan($this->getName(), null, null, null);
 		}else{
 			$this->server->getNameBans()->remove($this->getName());
@@ -128,7 +129,7 @@ class OfflinePlayer implements IPlayer, Metadatable {
 	 * @param bool $value
 	 */
 	public function setWhitelisted($value){
-		if($value === true){
+		if($value){
 			$this->server->addWhitelist(strtolower($this->getName()));
 		}else{
 			$this->server->removeWhitelist(strtolower($this->getName()));

@@ -40,6 +40,8 @@ class AsyncPool {
 	private $workers = [];
 	/** @var int[] */
 	private $workerUsage = [];
+	/** @var int[] */
+	private $workerLastUsed = [];
 
 	/**
 	 * AsyncPool constructor.
@@ -51,9 +53,11 @@ class AsyncPool {
 		$this->server = $server;
 		$this->size = (int) $size;
 
+		$memoryLimit = (int) max(-1, (int) $this->server->getProperty("memory.async-worker-hard-limit", 256));
+
 		for($i = 0; $i < $this->size; ++$i){
 			$this->workerUsage[$i] = 0;
-			$this->workers[$i] = new AsyncWorker($this->server->getLogger(), $i + 1);
+			$this->workers[$i] = new AsyncWorker($this->server->getLogger(), $i + 1, $memoryLimit);
 			$this->workers[$i]->setClassLoader($this->server->getLoader());
 			$this->workers[$i]->start();
 		}
@@ -72,9 +76,12 @@ class AsyncPool {
 	public function increaseSize($newSize){
 		$newSize = (int) $newSize;
 		if($newSize > $this->size){
+
+			$memoryLimit = (int) max(-1, (int) $this->server->getProperty("memory.async-worker-hard-limit", 256));
+
 			for($i = $this->size; $i < $newSize; ++$i){
 				$this->workerUsage[$i] = 0;
-				$this->workers[$i] = new AsyncWorker($this->server->getLogger(), $i + 1);
+				$this->workers[$i] = new AsyncWorker($this->server->getLogger(), $i + 1, $memoryLimit);
 				$this->workers[$i]->setClassLoader($this->server->getLoader());
 				$this->workers[$i]->start();
 			}
@@ -101,14 +108,15 @@ class AsyncPool {
 		$this->workers[$worker]->stack($task);
 		$this->workerUsage[$worker]++;
 		$this->taskWorkers[$task->getTaskId()] = $worker;
+		$this->workerLastUsed[$worker] = time();
 	}
 
 	/**
 	 * @param AsyncTask $task
 	 */
-	public function submitTask(AsyncTask $task){
+	public function submitTask(AsyncTask $task) : int{
 		if(isset($this->tasks[$task->getTaskId()]) or $task->isGarbage()){
-			return;
+			return -1;
 		}
 
 		$selectedWorker = mt_rand(0, $this->size - 1);
@@ -121,6 +129,7 @@ class AsyncPool {
 		}
 
 		$this->submitTaskToWorker($task, $selectedWorker);
+		return $selectedWorker;
 	}
 
 	/**
@@ -145,6 +154,15 @@ class AsyncPool {
 	}
 
 	public function removeTasks(){
+		foreach($this->workers as $worker){
+			/** @var AsyncTask $task */
+			while(($task = $worker->unstack()) !== null){
+				//cancelRun() is not strictly necessary here, but it might be used to inform plugins of the task state
+				//(i.e. it never executed).
+				$task->cancelRun();
+				$this->removeTask($task, true);
+			}
+		}
 		do{
 			foreach($this->tasks as $task){
 				$task->cancelRun();
@@ -162,16 +180,39 @@ class AsyncPool {
 
 		$this->taskWorkers = [];
 		$this->tasks = [];
+
+		$this->collectWorkers();
+	}
+
+	/**
+	 * Collects garbage from running workers.
+	 */
+	private function collectWorkers() : void{
+		foreach($this->workers as $worker){
+			$worker->collect();
+		}
 	}
 
 	public function collectTasks(){
 		Timings::$schedulerAsyncTimer->startTiming();
 
 		foreach($this->tasks as $task){
+			if(!$task->isGarbage()){
+				$task->checkProgressUpdates($this->server);
+			}
 			if($task->isFinished() and !$task->isRunning() and !$task->isCrashed()){
-
 				if(!$task->hasCancelledRun()){
-					$task->onCompletion($this->server);
+					try{
+						$task->onCompletion($this->server);
+						if($task->removeDanglingStoredObjects()){
+							$this->server->getLogger()->notice("AsyncTask " . get_class($task) . " stored local complex data but did not remove them after completion");
+						}
+					}catch(\Throwable $e){
+						$this->server->getLogger()->critical("Could not execute completion of asychronous task " . (new \ReflectionClass($task))->getShortName() . ": " . $e->getMessage());
+						$this->server->getLogger()->logException($e);
+
+						$task->removeDanglingStoredObjects(); //silent
+					}
 				}
 
 				$this->removeTask($task);
@@ -181,6 +222,35 @@ class AsyncPool {
 			}
 		}
 
+		$this->collectWorkers();
+
 		Timings::$schedulerAsyncTimer->stopTiming();
+	}
+
+	public function shutdownUnusedWorkers() : int{
+		$ret = 0;
+		$time = time();
+		foreach($this->workerUsage as $i => $usage){
+			if($usage === 0 and (!isset($this->workerLastUsed[$i]) or $this->workerLastUsed[$i] + 300 < $time)){
+				$this->workers[$i]->quit();
+				unset($this->workers[$i], $this->workerUsage[$i], $this->workerLastUsed[$i]);
+				$ret++;
+			}
+		}
+
+		return $ret;
+	}
+
+	/**
+	 * Cancels all pending tasks and shuts down all the workers in the pool.
+	 */
+	public function shutdown() : void{
+		$this->collectTasks();
+		$this->removeTasks();
+		foreach($this->workers as $worker){
+			$worker->quit();
+		}
+		$this->workers = [];
+		$this->workerLastUsed = [];
 	}
 }

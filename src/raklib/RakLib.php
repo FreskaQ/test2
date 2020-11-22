@@ -49,7 +49,7 @@ if($errors > 0){
 unset($errors);
 
 abstract class RakLib{
-	const VERSION = "0.8.0";
+	const VERSION = "0.9.0";
 	const PROTOCOL = 6;
 	const MAGIC = "\x00\xff\xff\x00\xfe\xfe\xfe\xfe\xfd\xfd\xfd\xfd\x12\x34\x56\x78";
 
@@ -59,6 +59,9 @@ abstract class RakLib{
 	const FLAG_NEED_ACK = 0b00001000;
 
 	/*
+	 * These internal "packets" DO NOT exist in the RakNet protocol. They are used by the RakLib API to communicate
+	 * messages between the RakLib thread and the implementation's thread.
+	 *
 	 * Internal Packet:
 	 * int32 (length without this field)
 	 * byte (packet ID)
@@ -133,7 +136,7 @@ abstract class RakLib{
 	const PACKET_RAW = 0x08;
 
 	/*
-	 * RAW payload:
+	 * BLOCK_ADDRESS payload:
 	 * byte (address length)
 	 * byte[] (address)
 	 * int (timeout)
@@ -141,11 +144,19 @@ abstract class RakLib{
 	const PACKET_BLOCK_ADDRESS = 0x09;
 
 	/*
-	 * RAW payload:
+	 * UNBLOCK_ADDRESS payload:
 	 * byte (address length)
 	 * byte[] (address)
 	 */
 	const PACKET_UNBLOCK_ADDRESS = 0x0a;
+
+	/*
+	 * REPORT_PING payload:
+	 * byte (identifier length)
+	 * byte[] (identifier)
+	 * int32 (measured latency in MS)
+	 */
+	const PACKET_REPORT_PING = 0x11;
 
 	/*
 	 * No payload
@@ -160,6 +171,12 @@ abstract class RakLib{
 	 * Leaves everything as-is and halts, other Threads can be in a post-crash condition.
 	 */
 	const PACKET_EMERGENCY_SHUTDOWN = 0x7f;
+
+	/**
+	 * Regular RakNet uses 10 by default. MCPE uses 20. Configure this value as appropriate.
+	 * @var int
+	 */
+	public static $SYSTEM_ADDRESS_COUNT = 20;
 
 	public static function bootstrap(\ClassLoader $loader){
 		$loader->addPath(dirname(__FILE__) . DIRECTORY_SEPARATOR . "..");

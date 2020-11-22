@@ -37,6 +37,7 @@ abstract class Thread extends \Thread {
 
 	/** @var \ClassLoader */
 	protected $classLoader;
+
 	protected $isKilled = false;
 
 	/**
@@ -56,6 +57,13 @@ abstract class Thread extends \Thread {
 		$this->classLoader = $loader;
 	}
 
+	/**
+	 * Registers the class loader for this thread.
+	 *
+	 * WARNING: This method MUST be called from any descendent threads' run() method to make autoloading usable.
+	 * If you do not do this, you will not be able to use new classes that were not loaded when the thread was started
+	 * (unless you are using a custom autoloader).
+	 */
 	public function registerClassLoader(){
 		if(!interface_exists("ClassLoader", false)){
 			require(\pocketmine\PATH . "src/spl/ClassLoader.php");
@@ -71,17 +79,14 @@ abstract class Thread extends \Thread {
 	 *
 	 * @return bool
 	 */
-	public function start(int $options = PTHREADS_INHERIT_ALL){
+	public function start(?int $options = \PTHREADS_INHERIT_ALL){
 		ThreadManager::getInstance()->add($this);
 
-		if(!$this->isRunning() and !$this->isJoined() and !$this->isTerminated()){
-			if($this->getClassLoader() === null){
-				$this->setClassLoader();
-			}
-			return parent::start($options);
+		if($this->getClassLoader() === null){
+			$this->setClassLoader();
 		}
-
-		return false;
+		
+		return parent::start($options);
 	}
 
 	/**
@@ -90,12 +95,9 @@ abstract class Thread extends \Thread {
 	public function quit(){
 		$this->isKilled = true;
 
-		$this->notify();
-
 		if(!$this->isJoined()){
-			if(!$this->isTerminated()){
-				$this->join();
-			}
+			$this->notify();
+			$this->join();
 		}
 
 		ThreadManager::getInstance()->remove($this);

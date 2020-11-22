@@ -78,8 +78,12 @@ class LevelDB extends BaseLevelProvider {
 		if(!file_exists($this->path)){
 			mkdir($this->path, 0777, true);
 		}
+		$rawLevelData = file_get_contents($this->getPath() . "level.dat");
+		if($rawLevelData === false or strlen($rawLevelData) <= 8){
+			throw new LevelException("Truncated level.dat");
+		}
 		$nbt = new NBT(NBT::LITTLE_ENDIAN);
-		$nbt->read(substr(file_get_contents($this->getPath() . "level.dat"), 8));
+		$nbt->read(substr($rawLevelData, 8));
 		$levelData = $nbt->getData();
 		if($levelData instanceof CompoundTag){
 			$this->levelData = $levelData;

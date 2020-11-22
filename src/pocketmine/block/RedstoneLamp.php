@@ -37,13 +37,6 @@ class RedstoneLamp extends Solid {
 	}
 
 	/**
-	 * @return int
-	 */
-	public function getLightLevel(){
-		return 0;
-	}
-
-	/**
 	 * @return string
 	 */
 	public function getName() : string{
@@ -56,5 +49,9 @@ class RedstoneLamp extends Solid {
 	public function turnOn(){
 		$this->getLevel()->setBlock($this, new LitRedstoneLamp(), true, true);
 		return true;
+	}
+
+	public function getHardness(){
+		return 0.3;
 	}
 }

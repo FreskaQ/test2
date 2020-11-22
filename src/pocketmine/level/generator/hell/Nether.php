@@ -28,7 +28,6 @@ use pocketmine\block\NetherQuartzOre;
 use pocketmine\block\SoulSand;
 use pocketmine\level\ChunkManager;
 use pocketmine\level\generator\biome\Biome;
-use pocketmine\level\generator\biome\BiomeSelector;
 use pocketmine\level\generator\Generator;
 use pocketmine\level\generator\noise\Simplex;
 use pocketmine\level\generator\object\OreType;
@@ -37,7 +36,7 @@ use pocketmine\level\generator\populator\NetherGlowStone;
 use pocketmine\level\generator\populator\NetherLava;
 use pocketmine\level\generator\populator\NetherOre;
 use pocketmine\level\generator\populator\Populator;
-use pocketmine\math\Vector3 as Vector3;
+use pocketmine\math\Vector3;
 use pocketmine\utils\Random;
 
 class Nether extends Generator {
@@ -58,35 +57,13 @@ class Nether extends Generator {
 	/** @var Simplex */
 	private $noiseBase;
 
-	private static $GAUSSIAN_KERNEL = null;
-	private static $SMOOTH_SIZE = 2;
-
 	/**
 	 * Nether constructor.
 	 *
 	 * @param array $options
 	 */
 	public function __construct(array $options = []){
-		if(self::$GAUSSIAN_KERNEL === null){
-			self::generateKernel();
-		}
-	}
-
-	private static function generateKernel(){
-		self::$GAUSSIAN_KERNEL = [];
-
-		$bellSize = 1 / self::$SMOOTH_SIZE;
-		$bellHeight = 2 * self::$SMOOTH_SIZE;
-
-		for($sx = -self::$SMOOTH_SIZE; $sx <= self::$SMOOTH_SIZE; ++$sx){
-			self::$GAUSSIAN_KERNEL[$sx + self::$SMOOTH_SIZE] = [];
-
-			for($sz = -self::$SMOOTH_SIZE; $sz <= self::$SMOOTH_SIZE; ++$sz){
-				$bx = $bellSize * $sx;
-				$bz = $bellSize * $sz;
-				self::$GAUSSIAN_KERNEL[$sx + self::$SMOOTH_SIZE][$sz + self::$SMOOTH_SIZE] = $bellHeight * exp(-($bx * $bx + $bz * $bz) / 2);
-			}
-		}
+		
 	}
 
 	/**

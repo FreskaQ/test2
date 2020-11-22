@@ -23,8 +23,11 @@ declare(strict_types=1);
 
 namespace pocketmine\level\format;
 
-class SubChunk {
+if(!defined(__NAMESPACE__ . '\ZERO_NIBBLE_ARRAY')){
+	define(__NAMESPACE__ . '\ZERO_NIBBLE_ARRAY', str_repeat("\x00", 2048));
+}
 
+class SubChunk {
 	protected $ids;
 	protected $data;
 	protected $blockLight;
@@ -58,6 +61,7 @@ class SubChunk {
 		self::assignData($this->data, $data, 2048);
 		self::assignData($this->skyLight, $skyLight, 2048, "\xff");
 		self::assignData($this->blockLight, $blockLight, 2048);
+		$this->collectGarbage();
 	}
 
 	/**
@@ -164,13 +168,14 @@ class SubChunk {
 
 		if($data !== null){
 			$i >>= 1;
-			$byte = ord($this->data{$i});
+			$oldPair = ord($this->data{$i});
 			if(($y & 1) === 0){
-				$this->data{$i} = chr(($byte & 0xf0) | ($data & 0x0f));
+                $newPair = ($oldPair & 0xf0) | ($data & 0x0f);
 			}else{
-				$this->data{$i} = chr((($data & 0x0f) << 4) | ($byte & 0x0f));
+                $newPair = (($data & 0x0f) << 4) | ($oldPair & 0x0f);
 			}
-			if($this->data{$i} !== $byte){
+            if($newPair !== $oldPair){
+                $this->data{$i} = chr($newPair);
 				$changed = true;
 			}
 		}
@@ -367,5 +372,26 @@ class SubChunk {
 			substr($data, 6144, 2048), //sky light
 			substr($data, 8192, 2048)  //block light
 		);
+	}
+
+	public function __debugInfo(){
+		return [];
+	}
+
+	public function collectGarbage() : void{
+		/*
+		 * This strange looking code is designed to exploit PHP's copy-on-write behaviour. Assigning will copy a
+		 * reference to the const instead of duplicating the whole string. The string will only be duplicated when
+		 * modified, which is perfect for this purpose.
+		 */
+		if($this->data === ZERO_NIBBLE_ARRAY){
+			$this->data = ZERO_NIBBLE_ARRAY;
+		}
+		if($this->skyLight === ZERO_NIBBLE_ARRAY){
+			$this->skyLight = ZERO_NIBBLE_ARRAY;
+		}
+		if($this->blockLight === ZERO_NIBBLE_ARRAY){
+			$this->blockLight = ZERO_NIBBLE_ARRAY;
+		}
 	}
 }

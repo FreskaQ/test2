@@ -80,7 +80,7 @@ class SpawnpointCommand extends VanillaCommand {
 		if(count($args) === 4){
 			if($level !== null){
 				$pos = $sender instanceof Player ? $sender->getPosition() : $level->getSpawnLocation();
-				$x = (int) $this->getRelativeDouble($pos->x, $sender, $args[1]);
+				$x = $this->getRelativeDouble($pos->x, $sender, $args[1]);
 				$y = $this->getRelativeDouble($pos->y, $sender, $args[2], 0, 128);
 				$z = $this->getRelativeDouble($pos->z, $sender, $args[3]);
 				$target->setSpawn(new Position($x, $y, $z, $level));

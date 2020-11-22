@@ -53,8 +53,8 @@ class VersionString {
 	/**
 	 * @return int
 	 */
-	public function getNumber(){
-		return (int) (($this->generation << 9) + ($this->major << 5) + $this->minor);
+	public function getNumber() : int{
+		return (($this->generation << 9) + ($this->major << 5) + $this->minor);
 	}
 
 	/**

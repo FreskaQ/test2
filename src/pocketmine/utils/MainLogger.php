@@ -30,7 +30,6 @@ class MainLogger extends \AttachableThreadedLogger {
 	protected $logStream;
 	protected $shutdown;
 	protected $logDebug;
-	private $logResource;
 	/** @var MainLogger */
 	public static $logger = null;
 
@@ -71,19 +70,30 @@ class MainLogger extends \AttachableThreadedLogger {
 		if(static::$logger instanceof MainLogger){
 			throw new \RuntimeException("MainLogger has been already created");
 		}
-		static::$logger = $this;
 		touch($logFile);
 		$this->logFile = $logFile;
 		$this->logDebug = (bool) $logDebug;
 		$this->logStream = new \Threaded;
-		$this->start();
+		$this->start(PTHREADS_INHERIT_NONE);
 	}
 
 	/**
 	 * @return MainLogger
 	 */
-	public static function getLogger(){
+	public static function getLogger() : MainLogger{
 		return static::$logger;
+	}
+
+	/**
+	 * Assigns the MainLogger instance to the {@link MainLogger#logger} static property.
+	 *
+	 * WARNING: Because static properties are thread-local, this MUST be called from the body of every Thread if you
+	 * want the logger to be accessible via {@link MainLogger#getLogger}.
+	 */
+	public function registerStatic(){
+		if(static::$logger === null){
+			static::$logger = $this;
+		}
 	}
 
 	/**
@@ -200,9 +210,9 @@ class MainLogger extends \AttachableThreadedLogger {
 		if(($pos = strpos($errstr, "\n")) !== false){
 			$errstr = substr($errstr, 0, $pos);
 		}
-		$errfile = \pocketmine\cleanPath($errfile);
+		$errfile = Utils::cleanPath($errfile);
 		$this->log($type, get_class($e) . ": \"$errstr\" ($errno) in \"$errfile\" at line $errline");
-		foreach(@\pocketmine\getTrace(1, $trace) as $i => $line){
+		foreach(@Utils::getTrace(1, $trace) as $i => $line){
 			$this->debug($line);
 		}
 	}
@@ -242,6 +252,7 @@ class MainLogger extends \AttachableThreadedLogger {
 
 	public function shutdown(){
 		$this->shutdown = true;
+		$this->notify();
 	}
 
 	/**
@@ -289,18 +300,13 @@ class MainLogger extends \AttachableThreadedLogger {
 			$this->attachment->call($level, $message);
 		}
 
-		$this->logStream[] = date("Y-m-d", $now) . " " . $cleanMessage . "\n";
-		if($this->logStream->count() === 1){
-			$this->synchronized(function(){
-				$this->notify();
-			});
-		}
+		$this->logStream[] = date("Y-m-d", $now) . " " . $cleanMessage . PHP_EOL;
 	}
 
 	/*public function run(){
 		$this->shutdown = false;
 		if($this->write){
-			$this->logResource = fopen($this->logFile, "a+b");
+			$this->logResource = fopen($this->logFile, "ab");
 			if(!is_resource($this->logResource)){
 				throw new \RuntimeException("Couldn't open log file");
 			}

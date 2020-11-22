@@ -30,12 +30,28 @@ class Binary {
 	const BIG_ENDIAN = 0x00;
 	const LITTLE_ENDIAN = 0x01;
 
-	/**
-	 * @param $str
-	 * @param $expect
-	 */
-	private static function checkLength($str, $expect){
-		assert(($len = strlen($str)) === $expect, "Expected $expect bytes, got $len");
+	public static function signByte(int $value) : int{
+		return $value << 56 >> 56;
+	}
+
+	public static function unsignByte(int $value) : int{
+		return $value & 0xff;
+	}
+
+	public static function signShort(int $value) : int{
+		return $value << 48 >> 48;
+	}
+
+	public static function unsignShort(int $value) : int{
+		return $value & 0xffff;
+	}
+
+	public static function signInt(int $value) : int{
+		return $value << 32 >> 32;
+	}
+
+	public static function unsignInt(int $value) : int{
+		return $value & 0xffffffff;
 	}
 
 	/**
@@ -46,8 +62,6 @@ class Binary {
 	 * @return mixed
 	 */
 	public static function readTriad($str){
-		self::checkLength($str, 3);
-
 		return unpack("N", "\x00" . $str)[1];
 	}
 
@@ -70,8 +84,6 @@ class Binary {
 	 * @return mixed
 	 */
 	public static function readLTriad($str){
-		self::checkLength($str, 3);
-
 		return unpack("V", $str . "\x00")[1];
 	}
 
@@ -117,7 +129,6 @@ class Binary {
 	 * @return int
 	 */
 	public static function readByte($c, $signed = true){
-		self::checkLength($c, 1);
 		$b = ord($c{0});
 
 		if($signed){
@@ -129,6 +140,16 @@ class Binary {
 		}else{
 			return $b;
 		}
+	}
+
+	/**
+	 * Reads a signed byte (-128 - 127)
+	 *
+	 * @param string $c
+	 * @return int
+	 */
+	public static function readSignedByte(string $c) : int{
+		return self::signByte(ord($c{0}));
 	}
 
 	/**
@@ -150,8 +171,6 @@ class Binary {
 	 * @return int
 	 */
 	public static function readShort($str){
-		self::checkLength($str, 2);
-
 		return unpack("n", $str)[1];
 	}
 
@@ -163,9 +182,8 @@ class Binary {
 	 * @return int
 	 */
 	public static function readSignedShort($str){
-		self::checkLength($str, 2);
-		if(PHP_INT_SIZE === 8){
-			return unpack("n", $str)[1] << 48 >> 48;
+        if(PHP_INT_SIZE === 8){
+			return self::signShort(unpack("n", $str)[1]);
 		}else{
 			return unpack("n", $str)[1] << 16 >> 16;
 		}
@@ -190,8 +208,6 @@ class Binary {
 	 * @return int
 	 */
 	public static function readLShort($str){
-		self::checkLength($str, 2);
-
 		return unpack("v", $str)[1];
 	}
 
@@ -203,9 +219,8 @@ class Binary {
 	 * @return int
 	 */
 	public static function readSignedLShort($str){
-		self::checkLength($str, 2);
 		if(PHP_INT_SIZE === 8){
-			return unpack("v", $str)[1] << 48 >> 48;
+			return self::signShort(unpack("v", $str)[1]);
 		}else{
 			return unpack("v", $str)[1] << 16 >> 16;
 		}
@@ -228,9 +243,8 @@ class Binary {
 	 * @return int
 	 */
 	public static function readInt($str){
-		self::checkLength($str, 4);
 		if(PHP_INT_SIZE === 8){
-			return unpack("N", $str)[1] << 32 >> 32;
+			return self::signInt(unpack("N", $str)[1]);
 		}else{
 			return unpack("N", $str)[1];
 		}
@@ -251,9 +265,8 @@ class Binary {
 	 * @return int
 	 */
 	public static function readLInt($str){
-		self::checkLength($str, 4);
 		if(PHP_INT_SIZE === 8){
-			return unpack("V", $str)[1] << 32 >> 32;
+			return self::signInt(unpack("V", $str)[1]);
 		}else{
 			return unpack("V", $str)[1];
 		}
@@ -275,7 +288,6 @@ class Binary {
 	 * @return float
 	 */
 	public static function readFloat($str, int $accuracy = -1){
-		self::checkLength($str, 4);
 		$value = ENDIANNESS === self::BIG_ENDIAN ? unpack("f", $str)[1] : unpack("f", strrev($str))[1];
 		if($accuracy > -1){
 			return round($value, $accuracy);
@@ -300,7 +312,6 @@ class Binary {
 	 * @return float
 	 */
 	public static function readLFloat($str, int $accuracy = -1){
-		self::checkLength($str, 4);
 		$value = ENDIANNESS === self::BIG_ENDIAN ? unpack("f", strrev($str))[1] : unpack("f", $str)[1];
 		if($accuracy > -1){
 			return round($value, $accuracy);
@@ -333,8 +344,6 @@ class Binary {
 	 * @return mixed
 	 */
 	public static function readDouble($str){
-		self::checkLength($str, 8);
-
 		return ENDIANNESS === self::BIG_ENDIAN ? unpack("d", $str)[1] : unpack("d", strrev($str))[1];
 	}
 
@@ -353,8 +362,6 @@ class Binary {
 	 * @return mixed
 	 */
 	public static function readLDouble($str){
-		self::checkLength($str, 8);
-
 		return ENDIANNESS === self::BIG_ENDIAN ? unpack("d", strrev($str))[1] : unpack("d", $str)[1];
 	}
 
@@ -373,7 +380,6 @@ class Binary {
 	 * @return int|string
 	 */
 	public static function readLong($x){
-		self::checkLength($x, 8);
 		if(PHP_INT_SIZE === 8){
 			$int = unpack("N*", $x);
 

@@ -41,7 +41,7 @@ class ShortTag extends NamedTag {
 	 * @return mixed|void
 	 */
 	public function read(NBT $nbt, bool $network = false){
-		$this->value = $nbt->getShort();
+		$this->value = $nbt->getSignedShort();
 	}
 
 	/**

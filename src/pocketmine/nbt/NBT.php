@@ -679,6 +679,13 @@ class NBT {
 	}
 
 	/**
+	 * @return int
+	 */
+	public function getSignedShort() : int{
+		return $this->endianness === self::BIG_ENDIAN ? Binary::readSignedShort($this->get(2)) : Binary::readSignedLShort($this->get(2));
+	}
+
+	/**
 	 * @param $v
 	 */
 	public function putShort($v){

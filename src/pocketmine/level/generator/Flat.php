@@ -109,27 +109,17 @@ class Flat extends Generator {
 		return $result;
 	}
 
-	/**
-	 * @param $preset
-	 * @param $chunkX
-	 * @param $chunkZ
-	 */
 	protected function parsePreset($preset, $chunkX, $chunkZ){
 		$this->preset = $preset;
 		$preset = explode(";", $preset);
-		$blocks = $preset[1] ?? "";
-		$biome = $preset[2] ?? 1;
-		$options = $preset[3] ?? "";
+		$blocks = (string) ($preset[1] ?? "");
+		$biome = (int) ($preset[2] ?? 1);
+		$options = (string) ($preset[3] ?? "");
 		$this->structure = self::parseLayers($blocks);
 
 		$this->chunks = [];
 
 		$this->floorLevel = $y = count($this->structure);
-
-		for(; $y < 0xFF; ++$y){
-			$this->structure[$y] = [0, 0];
-		}
-
 
 		$this->chunk = clone $this->level->getChunk($chunkX, $chunkZ);
 		$this->chunk->setGenerated();
@@ -137,13 +127,24 @@ class Flat extends Generator {
 		for($Z = 0; $Z < 16; ++$Z){
 			for($X = 0; $X < 16; ++$X){
 				$this->chunk->setBiomeId($X, $Z, $biome);
-				for($y = 0; $y < 128; ++$y){
-					$this->chunk->setBlock($X, $y, $Z, ...$this->structure[$y]);
+				}
+		}
+
+		$count = count($this->structure);
+		for($sy = 0; $sy < $count; $sy += 16){
+			$subchunk = $this->chunk->getSubChunk($sy >> 4, true);
+			for($y = 0; $y < 16 and isset($this->structure[$y | $sy]); ++$y){
+				list($id, $meta) = $this->structure[$y | $sy];
+
+				for($Z = 0; $Z < 16; ++$Z){
+					for($X = 0; $X < 16; ++$X){
+						$subchunk->setBlock($X, $y, $Z, $id, $meta);
+					}
 				}
 			}
 		}
 
-
+        //TODO: more error checking
 		preg_match_all('#(([0-9a-z_]{1,})\(?([0-9a-z_ =:]{0,})\)?),?#', $options, $matches);
 		foreach($matches[2] as $i => $option){
 			$params = true;
@@ -161,12 +162,6 @@ class Flat extends Generator {
 		}
 	}
 
-	/**
-	 * @param ChunkManager $level
-	 * @param Random       $random
-	 *
-	 * @return mixed|void
-	 */
 	public function init(ChunkManager $level, Random $random){
 		$this->level = $level;
 		$this->random = $random;
@@ -181,12 +176,6 @@ class Flat extends Generator {
 		*/
 	}
 
-	/**
-	 * @param $chunkX
-	 * @param $chunkZ
-	 *
-	 * @return mixed|void
-	 */
 	public function generateChunk($chunkX, $chunkZ){
 		if($this->chunk === null){
 			if(isset($this->options["preset"]) and $this->options["preset"] != ""){
@@ -201,12 +190,6 @@ class Flat extends Generator {
 		$this->level->setChunk($chunkX, $chunkZ, $chunk);
 	}
 
-	/**
-	 * @param $chunkX
-	 * @param $chunkZ
-	 *
-	 * @return mixed|void
-	 */
 	public function populateChunk($chunkX, $chunkZ){
 		$this->random->setSeed(0xdeadbeef ^ ($chunkX << 8) ^ $chunkZ ^ $this->level->getSeed());
 		foreach($this->populators as $populator){
@@ -215,9 +198,6 @@ class Flat extends Generator {
 
 	}
 
-	/**
-	 * @return Vector3
-	 */
 	public function getSpawn(){
 		return new Vector3(128, $this->floorLevel, 128);
 	}

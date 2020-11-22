@@ -27,6 +27,8 @@ abstract class LightUpdate
 {
     /** @var Level */
     protected $level;
+    /** @var int[][] blockhash => [x, y, z, new light level] */
+    protected $updateNodes = [];
     /** @var \SplQueue */
     protected $spreadQueue;
     /** @var bool[] */
@@ -55,30 +57,44 @@ abstract class LightUpdate
 
     abstract protected function getLight(int $x, int $y, int $z): int;
 
+    /**
+     * @return void
+     */
     abstract protected function setLight(int $x, int $y, int $z, int $level);
 
-    public function setAndUpdateLight(int $x, int $y, int $z, int $newLevel)
-    {
-        if (isset($this->spreadVisited[$index = Level::blockHash($x, $y, $z)]) or isset($this->removalVisited[$index])) {
-            throw new \InvalidArgumentException("Already have a visit ready for this block");
-        }
-        $oldLevel = $this->getLight($x, $y, $z);
-        if ($oldLevel !== $newLevel) {
-            $this->setLight($x, $y, $z, $newLevel);
-            if ($oldLevel < $newLevel) { //light increased
-                $this->spreadVisited[$index] = true;
-                $this->spreadQueue->enqueue([$x, $y, $z]);
-            } else { //light removed
-                $this->removalVisited[$index] = true;
-                $this->removalQueue->enqueue([$x, $y, $z, $oldLevel]);
+    /**
+     * @return void
+     */
+    public function setAndUpdateLight(int $x, int $y, int $z, int $newLevel){
+        $this->updateNodes[Level::blockHash($x, $y, $z)] = [$x, $y, $z, $newLevel];
+    }
+
+    private function prepareNodes() : void{
+        foreach($this->updateNodes as $blockHash => [$x, $y, $z, $newLevel]){
+            $oldLevel = $this->getLight($x, $y, $z);
+
+            if($oldLevel !== $newLevel){
+                $this->setLight($x, $y, $z, $newLevel);
+                if($oldLevel < $newLevel){ //light increased
+                    $this->spreadVisited[$blockHash] = true;
+                    $this->spreadQueue->enqueue([$x, $y, $z]);
+                }else{ //light removed
+                    $this->removalVisited[$blockHash] = true;
+                    $this->removalQueue->enqueue([$x, $y, $z, $oldLevel]);
+                }
             }
         }
     }
 
-    public function execute()
-    {
+    /**
+     * @return void
+     */
+    public function execute(){
+        $this->prepareNodes();
+
         while (!$this->removalQueue->isEmpty()) {
             list($x, $y, $z, $oldAdjacentLight) = $this->removalQueue->dequeue();
+
             $points = [
                 [$x + 1, $y, $z],
                 [$x - 1, $y, $z],
@@ -87,6 +103,7 @@ abstract class LightUpdate
                 [$x, $y, $z + 1],
                 [$x, $y, $z - 1]
             ];
+
             foreach ($points as list($cx, $cy, $cz)) {
                 if ($cy < 0) {
                     continue;
@@ -94,12 +111,17 @@ abstract class LightUpdate
                 $this->computeRemoveLight($cx, $cy, $cz, $oldAdjacentLight);
             }
         }
+
         while (!$this->spreadQueue->isEmpty()) {
             list($x, $y, $z) = $this->spreadQueue->dequeue();
+
+            unset($this->spreadVisited[Level::blockHash($x, $y, $z)]);
+
             $newAdjacentLight = $this->getLight($x, $y, $z);
             if ($newAdjacentLight <= 0) {
                 continue;
             }
+
             $points = [
                 [$x + 1, $y, $z],
                 [$x - 1, $y, $z],
@@ -108,6 +130,7 @@ abstract class LightUpdate
                 [$x, $y, $z + 1],
                 [$x, $y, $z - 1]
             ];
+
             foreach ($points as list($cx, $cy, $cz)) {
                 if ($cy < 0) {
                     continue;
@@ -117,12 +140,16 @@ abstract class LightUpdate
         }
     }
 
-    protected function computeRemoveLight(int $x, int $y, int $z, int $oldAdjacentLevel)
-    {
+    /**
+     * @return void
+     */
+    protected function computeRemoveLight(int $x, int $y, int $z, int $oldAdjacentLevel){
         $current = $this->getLight($x, $y, $z);
+
         if ($current !== 0 and $current < $oldAdjacentLevel) {
             $this->setLight($x, $y, $z, 0);
-            if (!isset($visited[$index = Level::blockHash($x, $y, $z)])) {
+
+            if (!isset($this->removalVisited[$index = Level::blockHash($x, $y, $z)])) {
                 $this->removalVisited[$index] = true;
                 if ($current > 1) {
                     $this->removalQueue->enqueue([$x, $y, $z, $current]);
@@ -136,17 +163,19 @@ abstract class LightUpdate
         }
     }
 
-    protected function computeSpreadLight(int $x, int $y, int $z, int $newAdjacentLevel)
-    {
+    /**
+     * @return void
+     */
+    protected function computeSpreadLight(int $x, int $y, int $z, int $newAdjacentLevel){
         $current = $this->getLight($x, $y, $z);
         $potentialLight = $newAdjacentLevel - Block::$lightFilter[$this->level->getBlockIdAt($x, $y, $z)];
+
         if ($current < $potentialLight) {
             $this->setLight($x, $y, $z, $potentialLight);
-            if (!isset($this->spreadVisited[$index = Level::blockHash($x, $y, $z)])) {
+
+            if (!isset($this->spreadVisited[$index = Level::blockHash($x, $y, $z)]) and $potentialLight > 1) {
                 $this->spreadVisited[$index] = true;
-                if ($potentialLight > 1) {
-                    $this->spreadQueue->enqueue([$x, $y, $z]);
-                }
+                $this->spreadQueue->enqueue([$x, $y, $z]);
             }
         }
     }

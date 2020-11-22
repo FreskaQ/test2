@@ -46,8 +46,8 @@ class BanIpCommand extends VanillaCommand {
 	public function __construct($name){
 		parent::__construct(
 			$name,
-			"%pocketmine.command.banip.description",
-			"%pocketmine.command.banip.usage"
+			"%pocketmine.command.ban.ip.description",
+			"%commands.banip.usage"
 		);
 		$this->setPermission("pocketmine.command.ban.ip");
 	}

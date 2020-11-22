@@ -61,7 +61,7 @@ class TextPacket extends DataPacket {
 			case self::TYPE_TRANSLATION:
 				$this->message = $this->getString();
 				$count = $this->getUnsignedVarInt();
-				for($i = 0; $i < $count; ++$i){
+				for($i = 0; $i < $count && !$this->feof(); ++$i){
 					$this->parameters[] = $this->getString();
 				}
 		}
@@ -95,7 +95,7 @@ class TextPacket extends DataPacket {
 	}
 
 	/**
-	 * @return PacketName|string
+	 * @return string
 	 */
 	public function getName(){
 		return "TextPacket";

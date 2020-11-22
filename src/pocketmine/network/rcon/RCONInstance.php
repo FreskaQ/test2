@@ -90,14 +90,13 @@ class RCONInstance extends Thread {
 
 	/**
 	 * @param $client
-	 * @param $size
 	 * @param $requestID
 	 * @param $packetType
 	 * @param $payload
 	 *
 	 * @return bool|null
 	 */
-	private function readPacket($client, &$size, &$requestID, &$packetType, &$payload){
+	private function readPacket($client, &$requestID, &$packetType, &$payload){
 		socket_set_nonblock($client);
 		$d = @socket_read($client, 4);
 		if($this->stop === true){
@@ -123,7 +122,6 @@ class RCONInstance extends Thread {
 	}
 
 	public function run(){
-
 		while($this->stop !== true){
 			$this->synchronized(function(){
 				$this->wait(2000);
@@ -159,7 +157,7 @@ class RCONInstance extends Thread {
 							$this->{"status" . $n} = -1;
 							continue;
 						}
-						$p = $this->readPacket($client, $size, $requestID, $packetType, $payload);
+						$p = $this->readPacket($client, $requestID, $packetType, $payload);
 						if($p === false){
 							$this->{"status" . $n} = -1;
 							continue;
@@ -171,7 +169,7 @@ class RCONInstance extends Thread {
 							case 9: //Protocol check
 								if($this->{"status" . $n} !== 1){
 									$this->{"status" . $n} = -1;
-									continue;
+									break;
 								}
 								$this->writePacket($client, $requestID, 0, RCON::PROTOCOL_VERSION);
 								$this->response = "";
@@ -181,7 +179,7 @@ class RCONInstance extends Thread {
 							case 4: //Logger
 								if($this->{"status" . $n} !== 1){
 									$this->{"status" . $n} = -1;
-									continue;
+									break;
 								}
 								$res = (array) [
 									"serverStatus" => unserialize($this->serverStatus),
@@ -193,7 +191,7 @@ class RCONInstance extends Thread {
 							case 3: //Login
 								if($this->{"status" . $n} !== 0){
 									$this->{"status" . $n} = -1;
-									continue;
+									break;
 								}
 								if($payload === $this->password){
 									socket_getpeername($client, $addr, $port);
@@ -204,13 +202,12 @@ class RCONInstance extends Thread {
 								}else{
 									$this->{"status" . $n} = -1;
 									$this->writePacket($client, -1, 2, "");
-									continue;
 								}
 								break;
 							case 2: //Command
 								if($this->{"status" . $n} !== 1){
 									$this->{"status" . $n} = -1;
-									continue;
+									break;
 								}
 								if(strlen($payload) > 0){
 									$this->cmd = ltrim($payload);
@@ -238,8 +235,6 @@ class RCONInstance extends Thread {
 				}
 			}
 		}
-		unset($this->socket, $this->cmd, $this->response, $this->stop);
-		exit(0);
 	}
 
 	/**

@@ -23,12 +23,14 @@ namespace pocketmine\network\mcpe\protocol;
 
 #include <rules/DataPacket.h>
 
+use pocketmine\item\Item;
 
 class DropItemPacket extends DataPacket {
 
 	const NETWORK_ID = ProtocolInfo::DROP_ITEM_PACKET;
 
 	public $type;
+	/** @var Item */
 	public $item;
 
 	/**

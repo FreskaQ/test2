@@ -48,6 +48,13 @@ class LitRedstoneLamp extends Solid {
 	}
 
 	/**
+	 * @return int
+	 */
+	public function getLightLevel() : int{
+		return 15;
+	}
+
+	/**
 	 * @return float
 	 */
 	public function getHardness(){

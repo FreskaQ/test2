@@ -37,7 +37,7 @@ class TellCommand extends VanillaCommand {
 		parent::__construct(
 			$name,
 			"%pocketmine.command.tell.description",
-			"%pocketmine.command.tell.usage",
+			"%commands.tell.usage",
 			["w", "whisper", "msg", "m"]
 		);
 		$this->setPermission("pocketmine.command.tell");
@@ -61,9 +61,7 @@ class TellCommand extends VanillaCommand {
 			return false;
 		}
 
-		$name = strtolower(array_shift($args));
-
-		$player = $sender->getServer()->getPlayer($name);
+		$player = $sender->getServer()->getPlayer(array_shift($args));
 
 		if($player === $sender){
 			$sender->sendMessage(new TranslationContainer(TextFormat::RED . "%commands.message.sameTarget"));

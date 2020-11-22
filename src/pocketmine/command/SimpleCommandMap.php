@@ -52,6 +52,7 @@ use pocketmine\command\defaults\PardonCommand;
 use pocketmine\command\defaults\PardonIpCommand;
 use pocketmine\command\defaults\ParticleCommand;
 use pocketmine\command\defaults\PluginsCommand;
+use pocketmine\command\defaults\PingCommand;
 use pocketmine\command\defaults\ReloadCommand;
 use pocketmine\command\defaults\SaveCommand;
 use pocketmine\command\defaults\SaveOffCommand;
@@ -162,6 +163,7 @@ class SimpleCommandMap implements CommandMap {
 		$this->register("pocketmine", new EffectCommand("effect"));
 		$this->register("pocketmine", new EnchantCommand("enchant"));
 		$this->register("pocketmine", new ParticleCommand("particle"));
+		$this->register("pocketmine", new PingCommand("ping"));
 		$this->register("pocketmine", new GamemodeCommand("gamemode"));
 		$this->register("pocketmine", new KillCommand("kill"));
 		$this->register("pocketmine", new SpawnpointCommand("spawnpoint"));
@@ -177,11 +179,9 @@ class SimpleCommandMap implements CommandMap {
 		$this->register("pocketmine", new XpCommand("xp"));
 		$this->register("pocketmine", new SetBlockCommand("setblock"));
 
-		if($this->server->getProperty("debug.commands", false)){
-			$this->register("pocketmine", new StatusCommand("status"), null, true);
-			$this->register("pocketmine", new GarbageCollectorCommand("gc"), null, true);
-			$this->register("pocketmine", new DumpMemoryCommand("dumpmemory"), null, true);
-		}
+		$this->register("pocketmine", new StatusCommand("status"), null, true);
+		$this->register("pocketmine", new GarbageCollectorCommand("gc"), null, true);
+		$this->register("pocketmine", new DumpMemoryCommand("dumpmemory"), null, true);
 	}
 
 
@@ -341,6 +341,18 @@ class SimpleCommandMap implements CommandMap {
 		}
 		$target->timings->stopTiming();
 
+		return true;
+	}
+
+	public function unregister(Command $command){
+		foreach($this->knownCommands as $lbl => $cmd){
+			if($cmd === $command){
+				unset($this->knownCommands[$lbl]);
+			}
+		}
+
+		$command->unregister($this);
+		
 		return true;
 	}
 

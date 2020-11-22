@@ -39,7 +39,7 @@ class ExplodePacket extends DataPacket {
 	 */
 	public function clean(){
 		$this->records = [];
-
+		
 		return parent::clean();
 	}
 
@@ -60,7 +60,7 @@ class ExplodePacket extends DataPacket {
 		$this->putUnsignedVarInt(count($this->records));
 		if(count($this->records) > 0){
 			foreach($this->records as $record){
-				$this->putBlockCoords($record->x, $record->y, $record->z);
+				$this->putBlockCoords((int) $record->x, (int) $record->y, (int) $record->z);
 			}
 		}
 	}

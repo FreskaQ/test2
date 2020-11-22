@@ -30,7 +30,8 @@ class MovePlayerPacket extends DataPacket {
 
 	const MODE_NORMAL = 0;
 	const MODE_RESET = 1;
-	const MODE_ROTATION = 2;
+    const MODE_TELEPORT = 2;
+    const MODE_PITCH = 3; //facepalm Mojang
 
 	public $eid;
 	public $x;
@@ -40,17 +41,10 @@ class MovePlayerPacket extends DataPacket {
 	public $bodyYaw;
 	public $pitch;
 	public $mode = self::MODE_NORMAL;
-	public $onGround;
-	public $eid2;
-
-	/**
-	 * @return $this
-	 */
-	public function clean(){
-		$this->teleport = false;
-
-		return parent::clean();
-	}
+	public $onGround = false; //TODO
+	public $eid2 = 0;
+    public $teleportCause = 0;
+    public $teleportItem = 0;
 
 	/**
 	 *
@@ -64,6 +58,10 @@ class MovePlayerPacket extends DataPacket {
 		$this->mode = $this->getByte();
 		$this->onGround = $this->getBool();
 		$this->eid2 = $this->getEntityId();
+        if($this->mode === MovePlayerPacket::MODE_TELEPORT){
+            $this->teleportCause = $this->getLInt();
+            $this->teleportItem = $this->getLInt();
+        }
 	}
 
 	/**
@@ -79,6 +77,10 @@ class MovePlayerPacket extends DataPacket {
 		$this->putByte($this->mode);
 		$this->putBool($this->onGround);
 		$this->putEntityId($this->eid2); //EntityRuntimeID
+        if($this->mode === MovePlayerPacket::MODE_TELEPORT){
+            $this->putLInt($this->teleportCause);
+            $this->putLInt($this->teleportItem);
+        }
 	}
 
 }

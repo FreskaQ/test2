@@ -57,12 +57,11 @@ class MemoryManager {
 	private $garbageCollectionTrigger;
 	private $garbageCollectionAsync;
 
-	private $chunkRadiusOverride;
-	private $chunkCollect;
-	private $chunkTrigger;
+	private $lowMemChunkRadiusOverride;
+	private $lowMemChunkGC;
 
-	private $chunkCache;
-	private $cacheTrigger;
+	private $lowMemDisableChunkCache;
+	private $lowMemClearWorldCache;
 
 	/** @var \WeakRef[] */
 	private $leakWatch = [];
@@ -112,7 +111,7 @@ class MemoryManager {
 		$hardLimit = ((int) $this->server->getProperty("memory.main-hard-limit", $defaultMemory));
 
 		if($hardLimit <= 0){
-			ini_set("memory_limit", -1);
+			ini_set("memory_limit", '-1');
 		}else{
 			ini_set("memory_limit", $hardLimit . "M");
 		}
@@ -126,13 +125,11 @@ class MemoryManager {
 		$this->garbageCollectionTrigger = (bool) $this->server->getProperty("memory.garbage-collection.low-memory-trigger", true);
 		$this->garbageCollectionAsync = (bool) $this->server->getProperty("memory.garbage-collection.collect-async-worker", true);
 
-		$this->chunkRadiusOverride = (int) $this->server->getProperty("memory.max-chunks.chunk-radius", 4);
-		$this->chunkCollect = (bool) $this->server->getProperty("memory.max-chunks.trigger-chunk-collect", true);
-		$this->chunkTrigger = (bool) $this->server->getProperty("memory.max-chunks.low-memory-trigger", true);
+		$this->lowMemChunkRadiusOverride = (int) $this->server->getProperty("memory.max-chunks.chunk-radius", 4);
+		$this->lowMemChunkGC = (bool) $this->server->getProperty("memory.max-chunks.trigger-chunk-collect", true);
 
-		$this->chunkCache = (bool) $this->server->getProperty("memory.world-caches.disable-chunk-cache", true);
-		$this->cacheTrigger = (bool) $this->server->getProperty("memory.world-caches.low-memory-trigger", true);
-
+		$this->lowMemDisableChunkCache = (bool) $this->server->getProperty("memory.world-caches.disable-chunk-cache", true);
+		$this->lowMemClearWorldCache = (bool) $this->server->getProperty("memory.world-caches.low-memory-trigger", true);
 		gc_enable();
 	}
 
@@ -147,7 +144,7 @@ class MemoryManager {
 	 * @return bool
 	 */
 	public function canUseChunkCache(){
-		return !($this->lowMemory and $this->chunkTrigger);
+		return !$this->lowMemory or !$this->lowMemDisableChunkCache;
 	}
 
 	/**
@@ -158,7 +155,7 @@ class MemoryManager {
 	 * @return int
 	 */
 	public function getViewDistance(int $distance) : int{
-		return $this->lowMemory ? min($this->chunkRadiusOverride, $distance) : $distance;
+		return ($this->lowMemory and $this->lowMemChunkRadiusOverride > 0) ? (int) min($this->lowMemChunkRadiusOverride, $distance) : $distance;
 	}
 
 	/**
@@ -170,13 +167,13 @@ class MemoryManager {
 	public function trigger($memory, $limit, $global = false, $triggerCount = 0){
 		$this->server->getLogger()->debug("[Memory Manager] " . ($global ? "Global " : "") . "Low memory triggered, limit " . round(($limit / 1024) / 1024, 2) . "MB, using " . round(($memory / 1024) / 1024, 2) . "MB");
 
-		if($this->cacheTrigger){
+		if($this->lowMemClearWorldCache){
 			foreach($this->server->getLevels() as $level){
 				$level->clearCache(true);
 			}
 		}
 
-		if($this->chunkTrigger and $this->chunkCollect){
+		if($this->lowMemChunkGC){
 			foreach($this->server->getLevels() as $level){
 				$level->doChunkGarbageCollection();
 			}
@@ -336,7 +333,7 @@ class MemoryManager {
 			$this->leakWatch[$id]->release();
 
 			$valid = true;
-			$references = getReferenceCount($object, false);
+			$references = Utils::getReferenceCount($object, false);
 		}
 
 		return [
@@ -356,7 +353,7 @@ class MemoryManager {
 	 */
 	public function dumpServerMemory($outputFolder, $maxNesting, $maxStringSize){
 		gc_disable();
-		ini_set("memory_limit", -1);
+		ini_set("memory_limit", '-1');
 		if(!file_exists($outputFolder)){
 			mkdir($outputFolder, 0777, true);
 		}
@@ -393,8 +390,8 @@ class MemoryManager {
 					"properties" => []
 				];
 
-				if($reflection->getParentClass()){
-					$info["parent"] = $reflection->getParentClass()->getName();
+				if(($parent = $reflection->getParentClass()) !== false){
+					$info["parent"] = $parent->getName();
 				}
 
 				if(count($reflection->getInterfaceNames()) > 0){

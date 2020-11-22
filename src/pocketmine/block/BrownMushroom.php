@@ -92,11 +92,4 @@ class BrownMushroom extends Flowable {
 		return false;
 	}
 
-	/**
-	 * @return null
-	 */
-	public function getBoundingBox(){
-		return null;
-	}
-
 }

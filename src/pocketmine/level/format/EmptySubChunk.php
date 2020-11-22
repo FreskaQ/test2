@@ -25,6 +25,16 @@ namespace pocketmine\level\format;
 
 
 class EmptySubChunk extends SubChunk {
+	/** @var EmptySubChunk */
+	private static $instance;
+
+	public static function getInstance() : self{
+		if(self::$instance === null){
+			self::$instance = new self();
+		}
+
+		return self::$instance;
+	}
 
 	/**
 	 * EmptySubChunk constructor.

@@ -55,10 +55,10 @@ class Chunk{
     protected $height = Chunk::MAX_SUBCHUNKS;
 
     /** @var SubChunk[] */
-    protected $subChunks = [];
+    protected $subChunks;
 
     /** @var EmptySubChunk */
-    protected $emptySubChunk = null;
+    protected $emptySubChunk;
 
     /** @var Tile[] */
     protected $tiles = [];
@@ -67,8 +67,8 @@ class Chunk{
     /** @var Entity[] */
     protected $entities = [];
 
-    /** @var int[256] */
-    protected $heightMap = [];
+    /** @var \SplFixedArray|int[] */
+	protected $heightMap;
 
     /** @var string */
     protected $biomeIds;
@@ -96,7 +96,7 @@ class Chunk{
 
         $this->height = Chunk::MAX_SUBCHUNKS; //TODO: add a way of changing this
 
-        $this->emptySubChunk = new EmptySubChunk();
+        $this->emptySubChunk = EmptySubChunk::getInstance();
 
         foreach($subChunks as $y => $subChunk){
             if($y < 0 or $y >= $this->height){
@@ -116,11 +116,11 @@ class Chunk{
         }
 
         if(count($heightMap) === 256){
-            $this->heightMap = $heightMap;
+            $this->heightMap = \SplFixedArray::fromArray($heightMap);
         }else{
             assert(count($heightMap) === 0, "Wrong HeightMap value count, expected 256, got " . count($heightMap));
             $val = ($this->height * 16);
-            $this->heightMap = array_fill(0, 256, $val);
+            $this->heightMap = \SplFixedArray::fromArray(array_fill(0, 256, $val));
         }
 
         if(strlen($biomeIds) === 256){
@@ -352,13 +352,14 @@ class Chunk{
         if($index === -1){
             return -1;
         }
-        $height = $index << 4;
+
         for($y = $index; $y >= 0; --$y){
             $height = $this->getSubChunk($y)->getHighestBlockAt($x, $z) | ($y << 4);
             if($height !== -1){
                 return $height;
             }
         }
+
         return -1;
     }
 
@@ -422,11 +423,11 @@ class Chunk{
      * TODO: fast adjacent light spread
      */
     public function populateSkyLight(){
+    	$maxY = ($this->getHighestSubChunkIndex() + 1) << 4;
         for($x = 0; $x < 16; ++$x){
             for($z = 0; $z < 16; ++$z){
                 $heightMap = $this->getHeightMap($x, $z);
-                $y = ($this->getHighestSubChunkIndex() + 1) << 4;
-                for(; $y >= $heightMap; --$y){
+                for($y = $maxY; $y >= $heightMap; --$y){
                     $this->setBlockSkyLight($x, $y, $z, 15);
                 }
                 $light = 15;
@@ -624,10 +625,33 @@ class Chunk{
     }
 
     /**
+     * @return Entity[]
+     */
+    public function getSavableEntities() : array{
+        return array_filter($this->entities, function(Entity $entity) : bool{ return $entity->canSaveWithChunk() and !$entity->isClosed(); });
+    }
+
+    /**
      * @return Tile[]
      */
     public function getTiles() : array{
         return $this->tiles;
+    }
+
+    /**
+     * Called when the chunk is unloaded, closing entities and tiles.
+     */
+    public function onUnload() : void{
+        foreach($this->getEntities() as $entity){
+            if($entity instanceof Player){
+                continue;
+            }
+            $entity->close();
+        }
+
+        foreach($this->getTiles() as $tile){
+            $tile->close();
+        }
     }
 
     /**
@@ -747,7 +771,7 @@ class Chunk{
      * @return int[]
      */
     public function getHeightMapArray() : array{
-        return $this->heightMap;
+        return $this->heightMap->toArray();
     }
 
     /**
@@ -844,21 +868,17 @@ class Chunk{
     }
 
     /**
-     * Disposes of empty subchunks
+     * Disposes of empty subchunks and frees data where possible
      */
-    public function pruneEmptySubChunks(){
+    public function collectGarbage() : void{
         foreach($this->subChunks as $y => $subChunk){
-            if($y < 0 or $y >= $this->height){
-                assert(false, "Invalid subchunk index");
-                unset($this->subChunks[$y]);
-            }elseif($subChunk instanceof EmptySubChunk){
-                continue;
-            }elseif($subChunk->isEmpty()){ //normal subchunk full of air, remove it and replace it with an empty stub
-                $this->subChunks[$y] = $this->emptySubChunk;
-            }else{
-                continue; //do not set changed
+            if($subChunk instanceof SubChunk){
+                if($subChunk->isEmpty()){
+                    $this->subChunks[$y] = $this->emptySubChunk;
+                }else{
+                    $subChunk->collectGarbage();
+                }
             }
-            $this->hasChanged = true;
         }
     }
 
@@ -887,16 +907,10 @@ class Chunk{
         }
         $result .= $extraData->getBuffer();
 
-        if(count($this->tiles) > 0){
-            $nbt = new NBT(NBT::LITTLE_ENDIAN);
-            $list = [];
-            foreach($this->tiles as $tile){
-                if($tile instanceof Spawnable){
-                    $list[] = $tile->getSpawnCompound();
-                }
+        foreach($this->tiles as $tile){
+			if($tile instanceof Spawnable){
+				$result .= $tile->getSerializedSpawnCompound();
             }
-            $nbt->setData($list);
-            $result .= $nbt->write(true);
         }
 
         return $result;
@@ -937,9 +951,8 @@ class Chunk{
      * @return Chunk
      */
     public static function fastDeserialize(string $data){
-        $stream = new BinaryStream();
-        $stream->setBuffer($data);
-        $data = null;
+        $stream = new BinaryStream($data);
+        
         $x = $stream->getInt();
         $z = $stream->getInt();
         $subChunks = [];

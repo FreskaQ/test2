@@ -60,7 +60,7 @@ class Anvil extends McRegion {
 		$nbt->Sections->setTagType(NBT::TAG_Compound);
 		$subChunks = -1;
 		foreach($chunk->getSubChunks() as $y => $subChunk){
-			if($subChunk->isEmpty()){
+			if(!($subChunk instanceof SubChunk) or $subChunk->isEmpty()){
 				continue;
 			}
 			$nbt->Sections[++$subChunks] = new CompoundTag(null, [
@@ -77,11 +77,9 @@ class Anvil extends McRegion {
 
 		$entities = [];
 
-		foreach($chunk->getEntities() as $entity){
-			if(!($entity instanceof Player) and !$entity->closed){
-				$entity->saveNBT();
-				$entities[] = $entity->namedtag;
-			}
+        foreach($chunk->getSavableEntities() as $entity){
+            $entity->saveNBT();
+            $entities[] = $entity->namedtag;
 		}
 
 		$nbt->Entities = new ListTag("Entities", $entities);

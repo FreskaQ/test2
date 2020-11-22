@@ -16,30 +16,25 @@
 namespace raklib\server;
 
 use raklib\protocol\ACK;
-use raklib\protocol\CLIENT_CONNECT_DataPacket;
-use raklib\protocol\CLIENT_DISCONNECT_DataPacket;
-use raklib\protocol\CLIENT_HANDSHAKE_DataPacket;
-use raklib\protocol\DATA_PACKET_0;
-use raklib\protocol\DATA_PACKET_4;
-use raklib\protocol\DataPacket;
+use raklib\protocol\ConnectedPing;
+use raklib\protocol\ConnectedPong;
+use raklib\protocol\ConnectionRequest;
+use raklib\protocol\ConnectionRequestAccepted;
+use raklib\protocol\Datagram;
+use raklib\protocol\DisconnectionNotification;
 use raklib\protocol\EncapsulatedPacket;
+use raklib\protocol\MessageIdentifiers;
 use raklib\protocol\NACK;
-use raklib\protocol\OPEN_CONNECTION_REPLY_1;
-use raklib\protocol\OPEN_CONNECTION_REPLY_2;
-use raklib\protocol\OPEN_CONNECTION_REQUEST_1;
-use raklib\protocol\OPEN_CONNECTION_REQUEST_2;
+use raklib\protocol\NewIncomingConnection;
 use raklib\protocol\Packet;
 use raklib\protocol\PacketReliability;
-use raklib\protocol\PING_DataPacket;
-use raklib\protocol\PONG_DataPacket;
-use raklib\protocol\SERVER_HANDSHAKE_DataPacket;
 use raklib\RakLib;
 
 class Session{
-	const STATE_UNCONNECTED = 0;
-	const STATE_CONNECTING_1 = 1;
-	const STATE_CONNECTING_2 = 2;
-	const STATE_CONNECTED = 3;
+	const STATE_CONNECTING = 0;
+	const STATE_CONNECTED = 1;
+	const STATE_DISCONNECTING = 2;
+	const STATE_DISCONNECTED = 3;
 
 	const MAX_SPLIT_SIZE = 128;
 	const MAX_SPLIT_COUNT = 4;
@@ -47,14 +42,14 @@ class Session{
 	public static $WINDOW_SIZE = 2048;
 
 	private $messageIndex = 0;
-	private $channelIndex = [];
+	private $channelIndex;
 
 	/** @var SessionManager */
 	private $sessionManager;
 	private $address;
 	private $port;
-	private $state = self::STATE_UNCONNECTED;
-	private $mtuSize = 548; //Min size
+	private $state = self::STATE_CONNECTING;
+	private $mtuSize;
 	private $id = 0;
 	private $splitID = 0;
 
@@ -62,11 +57,12 @@ class Session{
 	private $lastSeqNumber = -1;
 
 	private $lastUpdate;
-	private $startTime;
+	/** @var float */
+	private $disconnectionTime;
 
 	private $isTemporal = true;
 
-	/** @var DataPacket[] */
+	/** @var Datagram[] */
 	private $packetToSend = [];
 
 	private $isActive;
@@ -76,16 +72,16 @@ class Session{
 	/** @var int[] */
 	private $NACKQueue = [];
 
-	/** @var DataPacket[] */
+	/** @var Datagram[] */
 	private $recoveryQueue = [];
 
-	/** @var DataPacket[][] */
+	/** @var Datagram[][] */
 	private $splitPackets = [];
 
 	/** @var int[][] */
 	private $needACK = [];
 
-	/** @var DataPacket */
+	/** @var Datagram */
 	private $sendQueue;
 
 	private $windowStart;
@@ -96,14 +92,18 @@ class Session{
 	private $reliableWindowEnd;
 	private $reliableWindow = [];
 	private $lastReliableIndex = -1;
+	/** @var float */
+	private $lastPingTime = -1;
+	/** @var int */
+	private $lastPingMeasure = 0;
 
-	public function __construct(SessionManager $sessionManager, $address, $port){
+	public function __construct(SessionManager $sessionManager, $address, $port, $clientId, int $mtuSize){
 		$this->sessionManager = $sessionManager;
 		$this->address = $address;
 		$this->port = $port;
-		$this->sendQueue = new DATA_PACKET_4();
+		$this->id = $clientId;
+		$this->sendQueue = new Datagram();
 		$this->lastUpdate = microtime(true);
-		$this->startTime = microtime(true);
 		$this->isActive = false;
 		$this->windowStart = -1;
 		$this->windowEnd = self::$WINDOW_SIZE;
@@ -111,9 +111,9 @@ class Session{
 		$this->reliableWindowStart = 0;
 		$this->reliableWindowEnd = self::$WINDOW_SIZE;
 
-		for($i = 0; $i < 32; ++$i){
-			$this->channelIndex[$i] = 0;
-		}
+		$this->channelIndex = array_fill(0, 32, 0);
+
+		$this->mtuSize = $mtuSize;
 	}
 
 	public function getAddress(){
@@ -128,12 +128,33 @@ class Session{
 		return $this->id;
 	}
 
+	public function getState(){
+		return $this->state;
+	}
+
+	public function isTemporal(){
+		return $this->isTemporal;
+	}
+
+	public function isConnected() : bool{
+		return $this->state !== self::STATE_DISCONNECTING and $this->state !== self::STATE_DISCONNECTED;
+	}
+
 	public function update($time){
 		if(!$this->isActive and ($this->lastUpdate + 10) < $time){
 			$this->disconnect("timeout");
 
 			return;
 		}
+
+		if($this->state === self::STATE_DISCONNECTING and (
+			(empty($this->ACKQueue) and empty($this->NACKQueue) and empty($this->packetToSend) and empty($this->recoveryQueue)) or
+			$this->disconnectionTime + 10 < $time)
+		){
+			$this->close();
+			return;
+		}
+
 		$this->isActive = false;
 
 		if(count($this->ACKQueue) > 0){
@@ -153,11 +174,8 @@ class Session{
 		if(count($this->packetToSend) > 0){
 			$limit = 16;
 			foreach($this->packetToSend as $k => $pk){
-				$pk->sendTime = $time;
-				$pk->encode();
-				$this->recoveryQueue[$pk->seqNumber] = $pk;
+				$this->sendDatagram($pk);
 				unset($this->packetToSend[$k]);
-				$this->sendPacket($pk);
 
 				if(--$limit <= 0){
 					break;
@@ -196,11 +214,37 @@ class Session{
 			}
 		}
 
+		if($this->lastPingTime + 5 < $time){
+			$this->sendPing();
+			$this->lastPingTime = $time;
+		}
+
 		$this->sendQueue();
 	}
 
 	public function disconnect($reason = "unknown"){
 		$this->sessionManager->removeSession($this, $reason);
+	}
+
+	private function sendDatagram(Datagram $datagram){
+		if($datagram->seqNumber !== null){
+			unset($this->recoveryQueue[$datagram->seqNumber]);
+		}
+		$datagram->seqNumber = $this->sendSeqNumber++;
+		$datagram->sendTime = microtime(true);
+		$this->recoveryQueue[$datagram->seqNumber] = $datagram;
+		$this->sendPacket($datagram);
+	}
+
+	private function queueConnectedPacket(Packet $packet, int $reliability, int $orderChannel, int $flags = RakLib::PRIORITY_NORMAL){
+		$packet->encode();
+
+		$encapsulated = new EncapsulatedPacket();
+		$encapsulated->reliability = $reliability;
+		$encapsulated->orderChannel = $orderChannel;
+		$encapsulated->buffer = $packet->buffer;
+
+		$this->addEncapsulatedToQueue($encapsulated, $flags);
 	}
 
 	private function sendPacket(Packet $packet){
@@ -209,12 +253,15 @@ class Session{
 
 	public function sendQueue(){
 		if(count($this->sendQueue->packets) > 0){
-			$this->sendQueue->seqNumber = $this->sendSeqNumber++;
-			$this->sendPacket($this->sendQueue);
-			$this->sendQueue->sendTime = microtime(true);
-			$this->recoveryQueue[$this->sendQueue->seqNumber] = $this->sendQueue;
-			$this->sendQueue = new DATA_PACKET_4();
+			$this->sendDatagram($this->sendQueue);
+			$this->sendQueue = new Datagram();
 		}
+	}
+
+	private function sendPing(int $reliability = PacketReliability::UNRELIABLE){
+		$pk = new ConnectedPing();
+		$pk->sendPingTime = $this->sessionManager->getRakNetTimeMS();
+		$this->queueConnectedPacket($pk, $reliability, 0, RakLib::PRIORITY_IMMEDIATE);
 	}
 
 	/**
@@ -222,28 +269,13 @@ class Session{
 	 * @param int                $flags
 	 */
 	private function addToQueue(EncapsulatedPacket $pk, $flags = RakLib::PRIORITY_NORMAL){
-		$priority = $flags & 0b0000111;
+		$priority = $flags & 0b00000111;
 		if($pk->needACK and $pk->messageIndex !== null){
 			$this->needACK[$pk->identifierACK][$pk->messageIndex] = $pk->messageIndex;
 		}
-		if($priority === RakLib::PRIORITY_IMMEDIATE){ //Skip queues
-			$packet = new DATA_PACKET_0();
-			$packet->seqNumber = $this->sendSeqNumber++;
-			if($pk->needACK){
-				$packet->packets[] = clone $pk;
-				$pk->needACK = false;
-			}else{
-				$packet->packets[] = $pk->toBinary();
-			}
 
-			$this->sendPacket($packet);
-			$packet->sendTime = microtime(true);
-			$this->recoveryQueue[$packet->seqNumber] = $packet;
-
-			return;
-		}
 		$length = $this->sendQueue->length();
-		if($length + $pk->getTotalLength() > $this->mtuSize){
+		if($length + $pk->getTotalLength() > $this->mtuSize - 36){ //IP header (20 bytes) + UDP header (8 bytes) + RakNet weird (8 bytes) = 36 bytes
 			$this->sendQueue();
 		}
 
@@ -252,6 +284,11 @@ class Session{
 			$pk->needACK = false;
 		}else{
 			$this->sendQueue->packets[] = $pk->toBinary();
+		}
+
+		if($priority === RakLib::PRIORITY_IMMEDIATE){
+			// Forces pending sends to go out now, rather than waiting to the next update interval
+			$this->sendQueue();
 		}
 	}
 
@@ -265,47 +302,44 @@ class Session{
 			$this->needACK[$packet->identifierACK] = [];
 		}
 
-		if(
-			$packet->reliability === PacketReliability::RELIABLE or
-			$packet->reliability === PacketReliability::RELIABLE_ORDERED or
-			$packet->reliability === PacketReliability::RELIABLE_SEQUENCED or
-			$packet->reliability === PacketReliability::RELIABLE_WITH_ACK_RECEIPT or
-			$packet->reliability === PacketReliability::RELIABLE_ORDERED_WITH_ACK_RECEIPT
-		){
-			$packet->messageIndex = $this->messageIndex++;
-
-			if($packet->reliability === PacketReliability::RELIABLE_ORDERED){
-				$packet->orderIndex = $this->channelIndex[$packet->orderChannel]++;
-			}
+		if($packet->isSequenced()){
+			$packet->orderIndex = $this->channelIndex[$packet->orderChannel]++;
 		}
 
-		if($packet->getTotalLength() + 4 > $this->mtuSize){
-			$buffers = str_split($packet->buffer, $this->mtuSize - 34);
+		//IP header size (20 bytes) + UDP header size (8 bytes) + RakNet weird (8 bytes) + datagram header size (4 bytes) + max encapsulated packet header size (20 bytes)
+		$maxSize = $this->mtuSize - 60;
+
+		if(strlen($packet->buffer) > $maxSize){
+			$buffers = str_split($packet->buffer, $maxSize);
+			$bufferCount = count($buffers);
+			
 			$splitID = ++$this->splitID % 65536;
 			foreach($buffers as $count => $buffer){
 				$pk = new EncapsulatedPacket();
 				$pk->splitID = $splitID;
 				$pk->hasSplit = true;
-				$pk->splitCount = count($buffers);
+				$pk->splitCount = $bufferCount;
 				$pk->reliability = $packet->reliability;
 				$pk->splitIndex = $count;
 				$pk->buffer = $buffer;
-				if($count > 0){
+
+				if($packet->isReliable()){
 					$pk->messageIndex = $this->messageIndex++;
-				}else{
-					$pk->messageIndex = $packet->messageIndex;
 				}
-				if($pk->reliability === PacketReliability::RELIABLE_ORDERED){
-					$pk->orderChannel = $packet->orderChannel;
-					$pk->orderIndex = $packet->orderIndex;
-				}
+				
+				$pk->orderChannel = $packet->orderChannel;
+				$pk->orderIndex = $packet->orderIndex;
+
 				$this->addToQueue($pk, $flags | RakLib::PRIORITY_IMMEDIATE);
 			}
 		}else{
+			if($packet->isReliable()){
+				$packet->messageIndex = $this->messageIndex++;
+			}
 			$this->addToQueue($packet, $flags);
 		}
 	}
-	
+
 	private function handleSplit(EncapsulatedPacket $packet){
 		if($packet->splitCount >= self::MAX_SPLIT_SIZE or $packet->splitIndex >= self::MAX_SPLIT_SIZE or $packet->splitIndex < 0){
 			return;
@@ -370,14 +404,6 @@ class Session{
 
 	}
 
-	public function getState(){
-		return $this->state;
-	}
-
-	public function isTemporal(){
-		return $this->isTemporal;
-	}
-
 	private function handleEncapsulatedPacketRoute(EncapsulatedPacket $packet){
 		if($this->sessionManager === null){
 			return;
@@ -387,54 +413,53 @@ class Session{
 			if($this->state === self::STATE_CONNECTED){
 				$this->handleSplit($packet);
 			}
+
 			return;
 		}
 
 		$id = ord($packet->buffer{0});
-		if($id < 0x80){ //internal data packet
-			if($this->state === self::STATE_CONNECTING_2){
-				if($id === CLIENT_CONNECT_DataPacket::$ID){
-					$dataPacket = new CLIENT_CONNECT_DataPacket;
-					$dataPacket->buffer = $packet->buffer;
+		if($id < MessageIdentifiers::ID_USER_PACKET_ENUM){ //internal data packet
+			if($this->state === self::STATE_CONNECTING){
+				if($id === ConnectionRequest::$ID){
+					$dataPacket = new ConnectionRequest($packet->buffer);
 					$dataPacket->decode();
-					$pk = new SERVER_HANDSHAKE_DataPacket;
+					
+					$pk = new ConnectionRequestAccepted;
 					$pk->address = $this->address;
 					$pk->port = $this->port;
-					$pk->sendPing = $dataPacket->sendPing;
-					$pk->sendPong = bcadd($pk->sendPing, "1000");
-					$pk->encode();
-
-					$sendPacket = new EncapsulatedPacket();
-					$sendPacket->reliability = PacketReliability::UNRELIABLE;
-					$sendPacket->buffer = $pk->buffer;
-					$this->addToQueue($sendPacket, RakLib::PRIORITY_IMMEDIATE);
-				}elseif($id === CLIENT_HANDSHAKE_DataPacket::$ID){
-					$dataPacket = new CLIENT_HANDSHAKE_DataPacket;
-					$dataPacket->buffer = $packet->buffer;
+					$pk->sendPingTime = $dataPacket->sendPingTime;
+					$pk->sendPongTime = $this->sessionManager->getRakNetTimeMS();
+					$this->queueConnectedPacket($pk, PacketReliability::UNRELIABLE, 0, RakLib::PRIORITY_IMMEDIATE);
+				}elseif($id === NewIncomingConnection::$ID){
+					$dataPacket = new NewIncomingConnection($packet->buffer);
 					$dataPacket->decode();
 
 					if($dataPacket->port === $this->sessionManager->getPort() or !$this->sessionManager->portChecking){
 						$this->state = self::STATE_CONNECTED; //FINALLY!
 						$this->isTemporal = false;
 						$this->sessionManager->openSession($this);
+
+						$this->handlePong($dataPacket->sendPingTime, $dataPacket->sendPongTime); //can't use this due to system-address count issues in MCPE
+						$this->sendPing();
 					}
 				}
-			}elseif($id === CLIENT_DISCONNECT_DataPacket::$ID){
+			}elseif($id === DisconnectionNotification::$ID){
+				//TODO: we're supposed to send an ACK for this, but currently we're just deleting the session straight away
 				$this->disconnect("client disconnect");
-			}elseif($id === PING_DataPacket::$ID){
-				$dataPacket = new PING_DataPacket;
-				$dataPacket->buffer = $packet->buffer;
+			}elseif($id === ConnectedPing::$ID){
+				$dataPacket = new ConnectedPing($packet->buffer);
 				$dataPacket->decode();
 
-				$pk = new PONG_DataPacket;
-				$pk->pingID = $dataPacket->pingID;
-				$pk->encode();
+				$pk = new ConnectedPong;
+				$pk->sendPingTime = $dataPacket->sendPingTime;
+				$pk->sendPongTime = $this->sessionManager->getRakNetTimeMS();
+				$this->queueConnectedPacket($pk, PacketReliability::UNRELIABLE, 0);
+			}elseif($id === ConnectedPong::$ID){
+				$dataPacket = new ConnectedPong($packet->buffer);
+				$dataPacket->decode();
 
-				$sendPacket = new EncapsulatedPacket();
-				$sendPacket->reliability = PacketReliability::UNRELIABLE;
-				$sendPacket->buffer = $pk->buffer;
-				$this->addToQueue($sendPacket);
-			}//TODO: add PING/PONG (0x00/0x03) automatic latency measure
+				$this->handlePong($dataPacket->sendPingTime, $dataPacket->sendPongTime);
+			}
 		}elseif($this->state === self::STATE_CONNECTED){
 			$this->sessionManager->streamEncapsulated($this, $packet);
 
@@ -444,94 +469,88 @@ class Session{
 		}
 	}
 
+	/**
+	 * @param int $sendPingTime
+	 * @param int $sendPongTime TODO: clock differential stuff
+	 */
+	private function handlePong(int $sendPingTime, int $sendPongTime){
+		$this->lastPingMeasure = $this->sessionManager->getRakNetTimeMS() - $sendPingTime;
+		$this->sessionManager->streamPingMeasure($this, $this->lastPingMeasure);
+	}
+
 	public function handlePacket(Packet $packet){
 		$this->isActive = true;
 		$this->lastUpdate = microtime(true);
-		if($this->state === self::STATE_CONNECTED or $this->state === self::STATE_CONNECTING_2){
-			if($packet::$ID >= 0x80 and $packet::$ID <= 0x8f and $packet instanceof DataPacket){ //Data packet
-				$packet->decode();
 
-				if($packet->seqNumber < $this->windowStart or $packet->seqNumber > $this->windowEnd or isset($this->receivedWindow[$packet->seqNumber])){
-					return;
-				}
+		if($packet instanceof Datagram){ //In reality, ALL of these packets are datagrams.
+			$packet->decode();
 
-				$diff = $packet->seqNumber - $this->lastSeqNumber;
+			if($packet->seqNumber < $this->windowStart or $packet->seqNumber > $this->windowEnd or isset($this->receivedWindow[$packet->seqNumber])){
+				return;
+			}
 
-				unset($this->NACKQueue[$packet->seqNumber]);
-				$this->ACKQueue[$packet->seqNumber] = $packet->seqNumber;
-				$this->receivedWindow[$packet->seqNumber] = $packet->seqNumber;
+			$diff = $packet->seqNumber - $this->lastSeqNumber;
 
-				if($diff !== 1){
-					for($i = $this->lastSeqNumber + 1; $i < $packet->seqNumber; ++$i){
-						if(!isset($this->receivedWindow[$i])){
-							$this->NACKQueue[$i] = $i;
-						}
-					}
-				}
+			unset($this->NACKQueue[$packet->seqNumber]);
+			$this->ACKQueue[$packet->seqNumber] = $packet->seqNumber;
+			$this->receivedWindow[$packet->seqNumber] = $packet->seqNumber;
 
-				if($diff >= 1){
-					$this->lastSeqNumber = $packet->seqNumber;
-					$this->windowStart += $diff;
-					$this->windowEnd += $diff;
-				}
-
-				foreach($packet->packets as $pk){
-					$this->handleEncapsulatedPacket($pk);
-				}
-			}else{
-				if($packet instanceof ACK){
-					$packet->decode();
-					foreach($packet->packets as $seq){
-						if(isset($this->recoveryQueue[$seq])){
-							foreach($this->recoveryQueue[$seq]->packets as $pk){
-								if($pk instanceof EncapsulatedPacket and $pk->needACK and $pk->messageIndex !== null){
-									unset($this->needACK[$pk->identifierACK][$pk->messageIndex]);
-								}
-							}
-							unset($this->recoveryQueue[$seq]);
-						}
-					}
-				}elseif($packet instanceof NACK){
-					$packet->decode();
-					foreach($packet->packets as $seq){
-						if(isset($this->recoveryQueue[$seq])){
-							$pk = $this->recoveryQueue[$seq];
-							$pk->seqNumber = $this->sendSeqNumber++;
-							$this->packetToSend[] = $pk;
-							unset($this->recoveryQueue[$seq]);
-						}
+			if($diff !== 1){
+				for($i = $this->lastSeqNumber + 1; $i < $packet->seqNumber; ++$i){
+					if(!isset($this->receivedWindow[$i])){
+						$this->NACKQueue[$i] = $i;
 					}
 				}
 			}
 
-		}elseif($packet::$ID > 0x00 and $packet::$ID < 0x80){ //Not Data packet :)
-			$packet->decode();
-			if($packet instanceof OPEN_CONNECTION_REQUEST_1){
-				$packet->protocol; //TODO: check protocol number and refuse connections
-				$pk = new OPEN_CONNECTION_REPLY_1();
-				$pk->mtuSize = $packet->mtuSize;
-				$pk->serverID = $this->sessionManager->getID();
-				$this->sendPacket($pk);
-				$this->state = self::STATE_CONNECTING_1;
-			}elseif($this->state === self::STATE_CONNECTING_1 and $packet instanceof OPEN_CONNECTION_REQUEST_2){
-				$this->id = $packet->clientID;
-				if($packet->serverPort === $this->sessionManager->getPort() or !$this->sessionManager->portChecking){
-					$this->mtuSize = min(abs($packet->mtuSize), 1464); //Max size, do not allow creating large buffers to fill server memory
-					$pk = new OPEN_CONNECTION_REPLY_2();
-					$pk->mtuSize = $this->mtuSize;
-					$pk->serverID = $this->sessionManager->getID();
-					$pk->clientAddress = $this->address;
-					$pk->clientPort = $this->port;
-					$this->sendPacket($pk);
-					$this->state = self::STATE_CONNECTING_2;
+			if($diff >= 1){
+				$this->lastSeqNumber = $packet->seqNumber;
+				$this->windowStart += $diff;
+				$this->windowEnd += $diff;
+			}
+
+			foreach($packet->packets as $pk){
+				$this->handleEncapsulatedPacket($pk);
+			}
+		}else{
+			if($packet instanceof ACK){
+				$packet->decode();
+				foreach($packet->packets as $seq){
+					if(isset($this->recoveryQueue[$seq])){
+						foreach($this->recoveryQueue[$seq]->packets as $pk){
+							if($pk instanceof EncapsulatedPacket and $pk->needACK and $pk->messageIndex !== null){
+								unset($this->needACK[$pk->identifierACK][$pk->messageIndex]);
+							}
+						}
+						unset($this->recoveryQueue[$seq]);
+					}
+				}
+			}elseif($packet instanceof NACK){
+				$packet->decode();
+				foreach($packet->packets as $seq){
+					if(isset($this->recoveryQueue[$seq])){
+						$this->packetToSend[] = $this->recoveryQueue[$seq];
+						unset($this->recoveryQueue[$seq]);
+					}
 				}
 			}
 		}
 	}
 
+	public function flagForDisconnection(){
+		$this->state = self::STATE_DISCONNECTING;
+		$this->disconnectionTime = microtime(true);
+	}
+
 	public function close(){
-		$data = "\x60\x00\x08\x00\x00\x00\x00\x00\x00\x00\x15";
-		$this->addEncapsulatedToQueue(EncapsulatedPacket::fromBinary($data)); //CLIENT_DISCONNECT packet 0x15
-		$this->sessionManager = null;
+		if($this->state !== self::STATE_DISCONNECTED){
+			$this->state = self::STATE_DISCONNECTED;
+
+			//TODO: the client will send an ACK for this, but we aren't handling it (debug spam)
+			$this->queueConnectedPacket(new DisconnectionNotification(), PacketReliability::RELIABLE_ORDERED, 0, RakLib::PRIORITY_IMMEDIATE);
+
+			$this->sessionManager->getLogger()->debug("Closed session for $this->address $this->port");
+			$this->sessionManager->removeSessionInternal($this);
+		}
 	}
 }
